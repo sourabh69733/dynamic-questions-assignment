@@ -33,6 +33,7 @@ async def add_question(question: str, region: str):
     Returns:
         dict: A message indicating the successful addition of the question.
     """
+    region = region.lower()
     conn = get_db_connection(DATABASE)
     cursor = conn.cursor()
     cursor.execute("INSERT INTO questions (question, region) VALUES (?, ?)",
@@ -43,6 +44,7 @@ async def add_question(question: str, region: str):
 
 @app.get("/get_question/{region}")
 def get_question(region: str):
+    region = region.lower()
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     cursor.execute('''SELECT q.question 
@@ -67,7 +69,7 @@ def assign_questions_for_cycle():
     regions = cursor.fetchall()
     
     for region in regions:
-        region_name = region[0]
+        region_name = region[0].lower()
         
         # Get the next unassigned question for this region
         cursor.execute('''SELECT id FROM questions 
