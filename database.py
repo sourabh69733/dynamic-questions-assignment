@@ -20,14 +20,14 @@ def init_db(db_name: str) -> None:
         cursor.execute('''CREATE TABLE IF NOT EXISTS questions (
                             id INTEGER PRIMARY KEY AUTOINCREMENT,
                             question TEXT NOT NULL,
-                            region TEXT NOT NULL,
-                            cycle INTEGER NOT NULL
+                            region TEXT NOT NULL
                         )''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS assignments (
-                            region TEXT PRIMARY KEY,
-                            question_id INTEGER,
-                            cycle INTEGER,
-                            last_assigned TIMESTAMP
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            question_id INTEGER NOT NULL,
+                            region TEXT NOT NULL,
+                            cycle_start TIMESTAMP NOT NULL,
+                            FOREIGN KEY (question_id) REFERENCES questions (id)
                         )''')
         conn.commit()
     except sqlite3.Error as e:
