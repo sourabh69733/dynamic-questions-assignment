@@ -2,16 +2,26 @@ from fastapi import FastAPI, HTTPException
 from database import get_db_connection, init_db
 from datetime import datetime, timedelta
 import sqlite3
+from pydantic import BaseModel
+import schedule
+import time
+import threading
 
 app = FastAPI()
 
-DB_NAME = 'questions.db'
+DATABASE = 'questions.db'
+SCHEDULE_CYCLE_DAYS = 1
 
 # Initialize the database
-init_db(DB_NAME)
+init_db(DATABASE)
+
+class Question(BaseModel):
+    question: str
+    region: str
+
 
 @app.post("/add_question/")
-async def add_question(question: str, region: str, cycle: int):
+async def add_question(question: str, region: str):
     """
     Adds a new question to the database for a specific region and cycle.
 
@@ -23,50 +33,78 @@ async def add_question(question: str, region: str, cycle: int):
     Returns:
         dict: A message indicating the successful addition of the question.
     """
-    conn = get_db_connection(DB_NAME)
+    conn = get_db_connection(DATABASE)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO questions (question, region, cycle) VALUES (?, ?, ?)", (question, region, cycle))
+    cursor.execute("INSERT INTO questions (question, region) VALUES (?, ?)",
+                   (question, region))
     conn.commit()
     conn.close()
     return {"message": "Question added successfully"}
 
 @app.get("/get_question/{region}")
-async def get_question(region: str):
-    """
-    Retrieves a question for the specified region. If no question has been assigned
-    for the current cycle, assigns a new one from the database based on the region and cycle.
-
-    Args:
-        region (str): The region for which the question is being retrieved.
-
-    Returns:
-        dict: The region and the question assigned to it.
-
-    Raises:
-        HTTPException: If no question is found for the specified region and cycle.
-    """
-    conn = get_db_connection(DB_NAME)
+def get_question(region: str):
+    conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
-    now = datetime.now()
-    cursor.execute("SELECT * FROM assignments WHERE region = ?", (region,))
+    cursor.execute('''SELECT q.question 
+                      FROM questions q 
+                      JOIN assignments a ON q.id = a.question_id 
+                      WHERE a.region = ? 
+                      ORDER BY a.cycle_start DESC 
+                      LIMIT 1''', (region,))
     row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {"question": row[0]}
+    raise HTTPException(status_code=404, detail="Question not found for the current cycle")
+
+def assign_questions_for_cycle():
+    print('Assigning question to a new cycle')
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
     
-    if not row or (now - datetime.fromisoformat(row[3])) >= timedelta(weeks=1):
-        cursor.execute("SELECT id, question FROM questions WHERE region = ? AND cycle = ?", (region, row[2] + 1 if row else 1))
+    # Get available regions
+    cursor.execute("SELECT DISTINCT region FROM questions")
+    regions = cursor.fetchall()
+    
+    for region in regions:
+        region_name = region[0]
+        
+        # Get the next unassigned question for this region
+        cursor.execute('''SELECT id FROM questions 
+                          WHERE region = ? AND id NOT IN 
+                              (SELECT question_id FROM assignments WHERE region = ?)
+                          LIMIT 1''', (region_name, region_name))
         question_row = cursor.fetchone()
+        
         if question_row:
-            cursor.execute("INSERT OR REPLACE INTO assignments (region, question_id, cycle, last_assigned) VALUES (?, ?, ?, ?)", 
-                           (region, question_row[0], row[2] + 1 if row else 1, now))
+            question_id = question_row[0]
+            now = datetime.now()
+            
+            # Assign the question for the current cycle
+            cursor.execute('''INSERT INTO assignments (question_id, region, cycle_start)
+                              VALUES (?, ?, ?)''', (question_id, region_name, now))
             conn.commit()
-            question = question_row[1]
-        else:
-            conn.close()
-            raise HTTPException(status_code=404, detail="No question found for the region or cycle")
-    else:
-        question_id = row[1]
-        cursor.execute("SELECT id, question FROM questions WHERE id = ?", (question_id, ))
-        question_row = cursor.fetchone()
-        question = question_row[1]
     
     conn.close()
-    return {"region": region, "question": question}
+
+# Scheduler job
+def scheduler_job():
+    while True:
+        assign_questions_for_cycle()  # Assign questions for all regions
+        time.sleep(SCHEDULE_CYCLE_DAYS * 24 * 60 * 60)  # Sleep for one week (7 days)
+
+# Function to run the scheduler in a separate thread
+def start_scheduler():
+    scheduler_thread = threading.Thread(target=scheduler_job)
+    scheduler_thread.start()
+
+# Start the scheduler when the FastAPI app starts
+@app.on_event("startup")
+async def startup_event():
+    start_scheduler()
+    # Initial assignment
+    # assign_questions_for_cycle()
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
