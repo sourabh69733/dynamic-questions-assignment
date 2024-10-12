@@ -62,8 +62,8 @@ The architecture consists of the following components:
 #### Steps
 1. **Clone the repository:**
    ```bash
-   git clone <repository-url>
-   cd <repository-directory>
+   git clone git@github.com:sourabh69733/dynamic-questions-assignment.git
+   cd dynamic-questions-assignment
    ```
 2. Add sample questions data to database. Execute python script `populate_questions.py`
 ```python
